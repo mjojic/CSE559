@@ -21,6 +21,7 @@ from datetime import datetime
 from numpy import mean, std
 import sklearn.model_selection
 import lstm_utils as lstm
+import matplotlib.pyplot as plt
 
 
 warnings.filterwarnings('ignore')
@@ -144,6 +145,15 @@ def train_(embedding_name, train_X, train_y, test_X, test_y, device:str = "cpu",
     with open(log_file, "a") as f:
         f.write(f"Beginning training of {embedding_name} at {datetime.now()}\n")
         f.write(f"Modified: {modified}\n")
+
+    # lists to track metrics
+    # TODO: add loss to this list
+    accuracies = []
+    precisions = []
+    recalls = []
+    f1_scores = []
+    auc_scores = []
+
     # Hyperparameters
     # hyper-params
     print("Setting up arg dict")
@@ -291,6 +301,14 @@ def train_(embedding_name, train_X, train_y, test_X, test_y, device:str = "cpu",
     f1macro = f1_score(test_y, yhat, average='macro')
     f1micro = f1_score(test_y, yhat, average='micro')
     precision_recall_fscore_macro = precision_recall_fscore_support(test_y, yhat, average="macro")
+
+    # add metrics to lists for plotting
+    accuracies.append(accuracy)
+    precisions.append(precision1)
+    recalls.append(recall1)
+    f1_scores.append(f1macro)
+    auc_scores.append(auc_score)
+
     print('precision_recall_fscore_macro ' + str(precision_recall_fscore_macro))
     print('acc is '  + str(accuracy))
     print('precision1 is '  + str(precision1))
@@ -315,7 +333,51 @@ def train_(embedding_name, train_X, train_y, test_X, test_y, device:str = "cpu",
         f.write(f"F1 Micro: {f1micro}\n")
         f.write("\n")
 
+    # plotting code absolutely STOLEN from marko
+    epoch_range = range(1, len(accuracies) + 1)
     
+    plt.figure(figsize=(15, 10))
+    
+    plt.subplot(2, 3, 1)
+    plt.plot(epoch_range, accuracies, label='Accuracy')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    
+    plt.subplot(2, 3, 2)
+    plt.plot(epoch_range, precisions, label='Precision')
+    plt.xlabel('Epochs')
+    plt.ylabel('Precision')
+    plt.legend()
+    
+    plt.subplot(2, 3, 3)
+    plt.plot(epoch_range, recalls, label='Recall')
+    plt.xlabel('Epochs')
+    plt.ylabel('Recall')
+    plt.legend()
+    
+    plt.subplot(2, 3, 4)
+    plt.plot(epoch_range, f1_scores, label='F1 Score')
+    plt.xlabel('Epochs')
+    plt.ylabel('F1 Score')
+    plt.legend()
+    
+    plt.subplot(2, 3, 5)
+    plt.plot(epoch_range, auc_scores, label='AUC')
+    plt.xlabel('Epochs')
+    plt.ylabel('AUC')
+    plt.legend()
+    
+    plt.tight_layout()
+    
+    results_dir = 'results'
+    os.makedirs(results_dir, exist_ok=True)
+    
+    plot_path = os.path.join(results_dir, f"{embedding_name}_metrics.png")
+    plt.savefig(plot_path)
+    plt.close()
+    print(f"Metrics plot saved to {plot_path}")
+
 def main(name, split="tcr",fraction=1.0, seed=42, device="cpu", epochs:int = 100, modified:bool = False):
     column_names = ["epi", "tcr", "binding"]
     print(f"Getting the data for the split {split}")
