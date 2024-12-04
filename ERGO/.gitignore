@@ -1,0 +1,7 @@
+logs/
+outputs/
+models/
+slurm/
+aucs/
+sbatch/
+__pycache__/
