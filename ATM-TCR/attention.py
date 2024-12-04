@@ -75,10 +75,10 @@ class CrossAttentionNet(nn.Module):
         self.attn_tcr = nn.MultiheadAttention(embed_dim = self.embedding_dim, num_heads = args.heads)
         self.attn_pep = nn.MultiheadAttention(embed_dim = self.embedding_dim, num_heads = args.heads)
 
-        self.query_projection = nn.Linear(self.net_pep_dim + self.net_tcr_dim, self.net_pep_dim + self.net_tcr_dim)
-        self.key_projection = nn.Linear(self.net_pep_dim + self.net_tcr_dim, self.net_pep_dim + self.net_tcr_dim)
-        self.value_projection = nn.Linear(self.net_pep_dim + self.net_tcr_dim, self.net_pep_dim + self.net_tcr_dim)
-        self.cross_attention = nn.MultiheadAttention(embed_dim = self.net_pep_dim + self.net_tcr_dim, num_heads = args.heads)
+        self.query_projection = nn.Linear(self.embedding_dim, self.embedding_dim)
+        self.key_projection = nn.Linear(self.embedding_dim, self.embedding_dim)
+        self.value_projection = nn.Linear(self.embedding_dim, self.embedding_dim)
+        self.cross_attention = nn.MultiheadAttention(embed_dim = self.embedding_dim, num_heads = args.heads)
         # Dense Layer
         self.net = nn.Sequential(
             nn.Linear(self.net_pep_dim + self.net_tcr_dim,
@@ -107,23 +107,28 @@ class CrossAttentionNet(nn.Module):
         pep, pep_attn = self.attn_pep(pep,pep,pep)
         tcr, tcr_attn = self.attn_tcr(tcr,tcr,tcr)
 
-        pep = torch.transpose(pep, 0, 1)
-        tcr = torch.transpose(tcr, 0, 1)
+        
+        # pep = torch.transpose(pep, 0, 1)
+        # tcr = torch.transpose(tcr, 0, 1)
 
         # Linear
-        pep = pep.reshape(-1, 1, pep.size(-2) * pep.size(-1))
-        tcr = tcr.reshape(-1, 1, tcr.size(-2) * tcr.size(-1))
+        # pep = pep.reshape(-1, 1, pep.size(-2) * pep.size(-1))
+        # tcr = tcr.reshape(-1, 1, tcr.size(-2) * tcr.size(-1))
+        cat_pep_tcr = torch.cat((pep, tcr), 0)
 
         # Cross Attention
-        cat_pep_tcr = torch.cat((pep, tcr), -1).transpose(0, 1)
-        query = self.query_projection(torch.cat((pep, tcr), -1))
-        key = self.key_projection(torch.cat((pep, tcr), -1))
-        value = self.value_projection(torch.cat((pep, tcr), -1))
+        #cat_pep_tcr = torch.cat((pep, tcr), -1).transpose(0, 1)
+        query = self.query_projection(cat_pep_tcr)
+        key = self.key_projection(cat_pep_tcr)
+        value = self.value_projection(cat_pep_tcr)
 
         cross_attn, cross_attn_wei = self.cross_attention(query, key, value)
         cross_attn = cross_attn.squeeze()
 
-        # peptcr = torch.cat((pep, tcr), -1).squeeze(-2)
-        peptcr = self.net(cross_attn)
+        # Linear
+        cross_attn = cross_attn.transpose(0, 1)
+        cross_attn = cross_attn.reshape(cross_attn.size(0), -1)
 
-        return peptcr
+        out = self.net(cross_attn)
+
+        return out
