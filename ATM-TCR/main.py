@@ -12,11 +12,40 @@ from data_loader import define_dataloader, load_embedding, load_data_split
 from utils import str2bool, timeSince, get_performance_batchiter, print_performance, write_blackbox_output_batchiter
 import matplotlib.pyplot as plt
 import data_io_tf
+import torch.nn as nn
 
 # Constants
 PRINT_EVERY_EPOCH = 1
 
-def train(model, device, train_loader, optimizer, epoch):
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=1, gamma=2, logits=False, reduce=True):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.logits = logits
+        self.reduce = reduce
+
+    def forward(self, inputs, targets):
+        if self.logits:
+            BCE_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
+        else:
+            BCE_loss = F.binary_cross_entropy(inputs, targets, reduction='none')
+        pt = torch.exp(-BCE_loss)
+        F_loss = self.alpha * (1-pt)**self.gamma * BCE_loss
+
+        if self.reduce:
+            return torch.mean(F_loss)
+        else:
+            return F_loss
+class CompoundLoss(nn.Module):
+    def __init__(self, alpha=1, gamma=2):
+        super(CompoundLoss, self).__init__()
+        self.focal_loss = FocalLoss(alpha=alpha, gamma=gamma)
+        self.bce_loss = nn.BCELoss()
+    def forward(self, inputs, targets):
+        return self.focal_loss(inputs, targets) + self.bce_loss(inputs, targets)
+
+def train(model, device, train_loader, optimizer, criterion, epoch):
 
     model.train()
 
@@ -28,7 +57,7 @@ def train(model, device, train_loader, optimizer, epoch):
         optimizer.zero_grad()
         yhat = model(x_pep, x_tcr)
         y = y.unsqueeze(-1).expand_as(yhat)
-        loss = F.binary_cross_entropy(yhat, y)
+        loss = criterion(yhat, y)
         loss.backward()
         optimizer.step()
 
@@ -90,6 +119,14 @@ def main():
     parser.add_argument('--split_type', type=str, default='random',
                         help='how to split the dataset (random, tcr, epitope)')
     parser.add_argument('--results_dir', type=str, default='/home/mjojic/CSE494/results_atm/plot.png',)
+    parser.add_argument('--alpha', type=float, default=1.0,
+                        help='alpha value for focal loss')
+    parser.add_argument('--gamma', type=float, default=2.0,
+                        help='gamma value for focal loss')
+    parser.add_argument('--compound_loss', type=str2bool, default=False,
+                        help='use focal + BCE loss')
+    parser.add_argument('--lr_schedule', type=int, default=10,
+                        help='number of epochs before reducing lr')
     args = parser.parse_args()
 
     if args.mode == 'test':
@@ -98,10 +135,14 @@ def main():
     assert args.idx_val_fold < args.n_fold, '--idx_val_fold should be smaller than --n_fold'
     assert args.idx_val_fold != args.idx_test_fold, '--idx_val_fold and --idx_test_fold should not be equal to each other'
 
+    if args.compound_loss:
+        print('Using Compound Loss')
+        criterion = CompoundLoss(args.alpha, args.gamma)
+    else:
+        print('Using BCE Loss')
+        criterion = F.binary_cross_entropy
+
     # Set Cuda
-    if torch.cuda.is_available() and not args.cuda:
-        print("WARNING: You have a CUDA device, so you should probably run with --cuda")
-    # device = torch.device('cuda' if args.cuda else 'cpu')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Set random seed
@@ -145,9 +186,11 @@ def main():
     if args.model == 'attention':
         from attention import Net
     elif args.model == 'cross_attention':
+        print('Using Cross Attention Model')
         from attention import CrossAttentionNet as Net
     else:
         raise ValueError('unknown model name')
+    print(f'Min epoch: {args.min_epoch}')
 
     model = Net(embedding_matrix, args).to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -192,9 +235,14 @@ def main():
         t0 = time.time()
         lossArraySize = 10
         lossArray = deque([sys.maxsize], maxlen=lossArraySize)
+        lr = args.lr
+        lr_schedule = args.lr_schedule
         for epoch in range(1, args.epoch + 1):
+            if epoch % lr_schedule == 0:
+                lr = lr / 10
+                optimizer = optim.Adam(model.parameters(), lr=lr)
 
-            train(model, device, train_loader['loader'], optimizer, epoch)
+            train(model, device, train_loader['loader'], optimizer, criterion, epoch)
             perf_test = get_performance_batchiter(
                 test_loader['loader'], model, device)
             print(perf_test)
@@ -304,48 +352,56 @@ def main():
         # Plotting the maximum values
         plt.subplot(6, 3, 10)
         plt.plot(epochs, [max(accuracies)] * len(epochs), 'r--', label=f'Max Accuracy: {max(accuracies):.4f}')
+        plt.plot(epochs, max_acc, 'g', label='Upper Limit')
         plt.xlabel('Epochs')
         plt.ylabel('Max Accuracy')
         plt.legend()
 
         plt.subplot(6, 3, 11)
         plt.plot(epochs, [max(precisions1)] * len(epochs), 'r--', label=f'Max Precision1: {max(precisions1):.4f}')
+        plt.plot(epochs, max_prec1, 'g', label='Upper Limit')
         plt.xlabel('Epochs')
         plt.ylabel('Max Precision1')
         plt.legend()
 
         plt.subplot(6, 3, 12)
         plt.plot(epochs, [max(precisions0)] * len(epochs), 'r--', label=f'Max Precision0: {max(precisions0):.4f}')
+        plt.plot(epochs, max_prec0, 'g', label='Upper Limit')
         plt.xlabel('Epochs')
         plt.ylabel('Max Precision0')
         plt.legend()
 
         plt.subplot(6, 3, 13)
         plt.plot(epochs, [max(recalls1)] * len(epochs), 'r--', label=f'Max Recall1: {max(recalls1):.4f}')
+        plt.plot(epochs, max_rec1, 'g', label='Upper Limit')
         plt.xlabel('Epochs')
         plt.ylabel('Max Recall1')
         plt.legend()
 
         plt.subplot(6, 3, 14)
         plt.plot(epochs, [max(recalls0)] * len(epochs), 'r--', label=f'Max Recall0: {max(recalls0):.4f}')
+        plt.plot(epochs, max_rec0, 'g', label='Upper Limit')
         plt.xlabel('Epochs')
         plt.ylabel('Max Recall0')
         plt.legend()
 
         plt.subplot(6, 3, 15)
         plt.plot(epochs, [max(f1macros)] * len(epochs), 'r--', label=f'Max F1 Macro: {max(f1macros):.4f}')
+        plt.plot(epochs, max_f1macro, 'g', label='Upper Limit')
         plt.xlabel('Epochs')
         plt.ylabel('Max F1 Macro')
         plt.legend()
 
         plt.subplot(6, 3, 16)
         plt.plot(epochs, [max(f1micros)] * len(epochs), 'r--', label=f'Max F1 Micro: {max(f1micros):.4f}')
+        plt.plot(epochs, max_f1micro, 'g', label='Upper Limit')
         plt.xlabel('Epochs')
         plt.ylabel('Max F1 Micro')
         plt.legend()
 
         plt.subplot(6, 3, 17)
         plt.plot(epochs, [max(aucs)] * len(epochs), 'r--', label=f'Max AUC: {max(aucs):.4f}')
+        plt.plot(epochs, max_auc, 'g', label='Upper Limit')
         plt.xlabel('Epochs')
         plt.ylabel('Max AUC')
         plt.legend()
