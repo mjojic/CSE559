@@ -6,7 +6,7 @@ import time
 import numpy as np
 import torch.autograd as autograd
 from ERGO_models import DoubleLSTMClassifier, ModifiedLSTMClassifier
-from sklearn.metrics import roc_auc_score, roc_curve
+from sklearn.metrics import precision_recall_fscore_support,roc_auc_score, precision_score, recall_score, f1_score, roc_curve, accuracy_score
 
 
 def get_lists_from_pairs(pairs):
@@ -155,6 +155,7 @@ def train_model(batches, test_batches, device, args, params):
     """
     Train and evaluate the model
     """
+    full_metrics_dict: dict[str, list[float]] = {}
     losses = []
     # We use Cross-Entropy loss
     loss_function = nn.BCELoss()
@@ -174,43 +175,60 @@ def train_model(batches, test_batches, device, args, params):
     # We use Adam optimizer
     optimizer = optim.Adam(model.parameters(), lr=params['lr'], weight_decay=params['wd'])
     # Train several epochs
-    best_auc = 0
-    best_roc = None
+    # best_auc = 0
+    # best_roc = None
     print("Beginning training")
     for epoch in range(params['epochs']):
         print('epoch:', epoch + 1)
         epoch_time = time.time()
         # Train model and get loss
         loss = train_epoch(batches, model, loss_function, optimizer, device)
-        #losses.append(loss)
-        # Compute auc
-        #train_auc = evaluate(model, batches, device)[0]
-        #print('train auc:', train_auc)
-        #with open(args['train_auc_file'], 'a+') as file:
-        #    file.write(str(train_auc) + '\n')
-        #if params['option'] == 2:
-        #    test_w, test_c = test_batches
-        #    test_auc_w = evaluate(model, test_w, device)
-        #    print('test auc w:', test_auc_w)
-        #    with open(args['test_auc_file_w'], 'a+') as file:
-        #        file.write(str(test_auc_w) + '\n')
-        #    test_auc_c = evaluate(model, test_c, device)
-        #    print('test auc c:', test_auc_c)
-        #    with open(args['test_auc_file_c'], 'a+') as file:
-        #        file.write(str(test_auc_c) + '\n')
-        #else:
-        #    test_auc, roc = evaluate(model, test_batches, device)
-
-        #    # nni.report_intermediate_result(test_auc)
-
-        #    if test_auc > best_auc:
-        #        best_auc = test_auc
-        #        best_roc = roc
-        #    print('test auc:', test_auc)
-        #    with open(args['test_auc_file'], 'a+') as file:
-        #        file.write(str(test_auc) + '\n')
+        losses.append(loss)
+        # Get the metrics for this epoch
+        metrics_dict = get_metrics_dict(model=model, batches=test_batches, device=device)
+        for metric, value in metrics_dict.items():
+            if not (metric in full_metrics_dict) or full_metrics_dict[metric] is None:
+                full_metrics_dict[metric] = []
+            full_metrics_dict[metric].append(value)
         print('one epoch time:', time.time() - epoch_time)
-    return model, best_auc, best_roc
+    full_metrics_dict["loss"] = losses
+    # return model, best_auc, best_roc
+    return model, full_metrics_dict
+
+
+def get_metrics_dict(model, batches, device):
+    model.eval()
+    true = []
+    scores = []
+    for batch in batches:
+        padded_tcrs, tcr_lens, padded_peps, pep_lens, batch_signs = batch
+        # Move to GPU
+        padded_tcrs = padded_tcrs.to(device)
+        tcr_lens = tcr_lens.to(device)
+        padded_peps = padded_peps.to(device)
+        pep_lens = pep_lens.to(device)
+        probs = model(padded_tcrs, tcr_lens, padded_peps, pep_lens)
+        true.extend(np.array(batch_signs).astype(int))
+        scores.extend(probs.cpu().data.numpy())
+    # Return metrics
+    metrics_dict = {}
+    metrics_dict['auc_score'] = roc_auc_score(true, scores)
+    
+    # scores[scores>=0.5] = 1
+    # scores[scores<0.5] = 0
+    scores = list(map(lambda score: 1.0 if score >= 0.5 else 0.0, scores))
+    
+    metrics_dict['accuracy'] = accuracy_score(true, scores)
+    metrics_dict['precision1'] = precision_score(
+        true, scores, pos_label=1, zero_division=0)
+    metrics_dict['precision0'] = precision_score(
+        true, scores, pos_label=0, zero_division=0)
+    metrics_dict['recall1'] = recall_score(true, scores, pos_label=1, zero_division=0)
+    metrics_dict['recall0'] = recall_score(true, scores, pos_label=0, zero_division=0)
+    metrics_dict['f1macro'] = f1_score(true, scores, average='macro')
+    metrics_dict['f1micro'] = f1_score(true, scores, average='micro')
+    metrics_dict['precision_recall_fscore_macro'] = precision_recall_fscore_support(true, scores, average="macro")
+    return metrics_dict
 
 
 def evaluate(model, batches, device):

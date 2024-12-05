@@ -138,21 +138,19 @@ def lstm_get_lists_from_pairs(pairs):
     return tcrs, peps, signs
 
 def train_(embedding_name, train_X, train_y, test_X, test_y, device:str = "cpu", epochs:int = 100, modified:bool = False):
+    os.makedirs("logs", exist_ok=True)
+    os.makedirs("outputs", exist_ok=True)
+    os.makedirs("graphs", exist_ok=True)
+    os.makedirs("models", exist_ok=True)
     log_file = f"logs/{embedding_name}.log"
     output_file = f"outputs/{embedding_name}.txt"
+    graph_file = f"graphs/{embedding_name}_metrics.png"
+    model_file = f"models/{embedding_name}.pt"
 
     print(f"Modified: {modified}")
     with open(log_file, "a") as f:
         f.write(f"Beginning training of {embedding_name} at {datetime.now()}\n")
         f.write(f"Modified: {modified}\n")
-
-    # lists to track metrics
-    # TODO: add loss to this list
-    accuracies = []
-    precisions = []
-    recalls = []
-    f1_scores = []
-    auc_scores = []
 
     # Hyperparameters
     # hyper-params
@@ -193,7 +191,6 @@ def train_(embedding_name, train_X, train_y, test_X, test_y, device:str = "cpu",
 
     # Define the model 
     # train
-    # train_tcrs, train_peps, train_signs = lstm_get_lists_from_pairs(trainData)
     with open(log_file, "a") as f:
         f.write(f"Creating train lists at {datetime.now()}\n")
     print("Creating train lists:\n\tTCRs")
@@ -238,145 +235,127 @@ def train_(embedding_name, train_X, train_y, test_X, test_y, device:str = "cpu",
     with open(log_file, "a") as f:
         f.write(f"Beginning training at {datetime.now()}\n")
     print("Beginning training")
-    model, best_auc, best_roc = lstm.train_model(train_batches, test_batches, device, arg, params)
-    # model.fit([X1_train,X2_train], y_train, verbose=0, validation_split=0.20, epochs=200, batch_size = 32)
-    # model.save('models/' + embedding_name + '.hdf5')
+    model, metrics_dict = lstm.train_model(train_batches, test_batches, device, arg, params)
 
     # Save trained model
-    model_filepath = f"models/{embedding_name}.pt"
     with open(log_file, "a") as f:
-        f.write(f"Saving model weights to {model_filepath} at {datetime.now()}\n")
-    print(f"Saving model weights to {model_filepath}")
+        f.write(f"Saving model weights to {model_file} at {datetime.now()}\n")
+    print(f"Saving model weights to {model_file}")
     # torch.save({
     #     'model_state_dict': model.state_dict(),
     #     'params': params
     #     }, 
-    #     args.model_file)
-    torch.save(model.state_dict(), model_filepath)
-    # if args.roc_file:
-    #     # Save best ROC curve and AUC
-    #     np.savez(args.roc_file, fpr=best_roc[0], tpr=best_roc[1], auc=np.array(best_auc))
-
-    # Predict with the models
-    # yhat = model.predict([X1_test, X2_test])
-    # device = os.environ["CUDA_VISIBLE_DEVICES"]
-    
-    # yhat = lstm.predict(model, test_batches, device)
-    with open(log_file, "a") as f:
-        f.write(f"Getting predictions from model at {datetime.now()}\n")
-    print("Getting predictions")
-    model.eval()
-    yhat = []
-    test_y_from_batch = []
-    for batch in test_batches:
-        padded_tcrs, tcr_lens, padded_peps, pep_lens, batch_signs = batch
-        padded_tcrs = padded_tcrs.to(device)
-        tcr_lens = tcr_lens.to(device)
-        padded_peps = padded_peps.to(device)
-        pep_lens = pep_lens.to(device)
-        prediction_tensor = model(padded_tcrs, tcr_lens, padded_peps, pep_lens)
-        yhat.extend(prediction_tensor.cpu().data.numpy())
-        test_y_from_batch.extend(np.array(batch_signs))
-    yhat = pd.DataFrame(yhat)
-    test_y = pd.DataFrame(test_y_from_batch)
+    #     model_file)
+    torch.save(model.state_dict(), model_file)
 
     with open(log_file, "a") as f:
-        f.write(f"Metrics being generated at {output_file} at {datetime.now()}. End of logging\n")
+        f.write(f"Metrics being generated at {output_file} at {datetime.now()}\n")
     
-    print('================Performance========================')
+    print('================Performance of last epoch========================')
     
-    auc_score = roc_auc_score(test_y, yhat)
-    print(embedding_name+' AUC: ' + str(auc_score))
-    
-    yhat[yhat>=0.5] = 1
-    yhat[yhat<0.5] = 0
-    
-    accuracy = accuracy_score(test_y, yhat)
-    precision1 = precision_score(
-        test_y, yhat, pos_label=1, zero_division=0)
-    precision0 = precision_score(
-        test_y, yhat, pos_label=0, zero_division=0)
-    recall1 = recall_score(test_y, yhat, pos_label=1, zero_division=0)
-    recall0 = recall_score(test_y, yhat, pos_label=0, zero_division=0)
-    f1macro = f1_score(test_y, yhat, average='macro')
-    f1micro = f1_score(test_y, yhat, average='micro')
-    precision_recall_fscore_macro = precision_recall_fscore_support(test_y, yhat, average="macro")
+    print(f'{embedding_name} AUC: {metrics_dict["auc_score"][-1]}')
 
-    # add metrics to lists for plotting
-    accuracies.append(accuracy)
-    precisions.append(precision1)
-    recalls.append(recall1)
-    f1_scores.append(f1macro)
-    auc_scores.append(auc_score)
-
-    print('precision_recall_fscore_macro ' + str(precision_recall_fscore_macro))
-    print('acc is '  + str(accuracy))
-    print('precision1 is '  + str(precision1))
-    print('precision0 is '  + str(precision0))
-    print('recall1 is '  + str(recall1))
-    print('recall0 is '  + str(recall0))
-    print('f1macro is '  + str(f1macro))
-    print('f1micro is '  + str(f1micro))
+    print(f'precision_recall_fscore_macro is {metrics_dict["precision_recall_fscore_macro"][-1]}')
+    print(f'acc is {metrics_dict["accuracy"][-1]}')
+    print(f'precision1 is {metrics_dict["precision1"][-1]}')
+    print(f'precision0 is {metrics_dict["precision0"][-1]}')
+    print(f'recall1 is {metrics_dict["recall1"][-1]}')
+    print(f'recall0 is {metrics_dict["recall0"][-1]}')
+    print(f'f1macro is {metrics_dict["f1macro"][-1]}')
+    print(f'f1micro is {metrics_dict["f1micro"][-1]}')
 
     with open(output_file, "a") as f:
         f.write(f"Generated results at {datetime.now()}\n")
+        f.write("Showing last epoch's metrics\n")
         f.write("------------------------------------------\n")
         f.write(f"Modifed? {modified}\n")
-        f.write(f"AUC: {auc_score}\n")
-        f.write(f"Accuracy: {accuracy}\n")
-        f.write(f"Precision Recall FScore Macro: {precision_recall_fscore_macro}\n")
-        f.write(f"Precision 1: {precision1}\n")
-        f.write(f"Precision 0: {precision0}\n")
-        f.write(f"Recall 1: {recall1}\n")
-        f.write(f"Recall 0: {recall0}\n")
-        f.write(f"F1 Macro: {f1macro}\n")
-        f.write(f"F1 Micro: {f1micro}\n")
+        f.write(f'AUC: {metrics_dict["auc_score"][-1]}\n')
+        f.write(f'Accuracy: {metrics_dict["accuracy"][-1]}\n')
+        f.write(f'Precision Recall FScore Macro: {metrics_dict["precision_recall_fscore_macro"][-1]}\n')
+        f.write(f'Precision 1: {metrics_dict["precision1"][-1]}\n')
+        f.write(f'Precision 0: {metrics_dict["precision0"][-1]}\n')
+        f.write(f'Recall 1: {metrics_dict["recall1"][-1]}\n')
+        f.write(f'Recall 0: {metrics_dict["recall0"][-1]}\n')
+        f.write(f'F1 Macro: {metrics_dict["f1macro"][-1]}\n')
+        f.write(f'F1 Micro: {metrics_dict["f1micro"][-1]}\n')
         f.write("\n")
 
-    # plotting code absolutely STOLEN from marko
-    epoch_range = range(1, len(accuracies) + 1)
+    # plotting code absolutely STOLEN from marko :P
+    epoch_range = range(1, len(metrics_dict["accuracy"]) + 1)
     
     plt.figure(figsize=(15, 10))
     
-    plt.subplot(2, 3, 1)
-    plt.plot(epoch_range, accuracies, label='Accuracy')
+    plt.subplot(3, 4, 1)
+    plt.plot(epoch_range, metrics_dict["loss"], label='Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+
+    plt.subplot(3, 4, 2)
+    plt.plot(epoch_range, metrics_dict["accuracy"], label='Accuracy')
     plt.xlabel('Epochs')
     plt.ylabel('Accuracy')
     plt.legend()
     
-    plt.subplot(2, 3, 2)
-    plt.plot(epoch_range, precisions, label='Precision')
-    plt.xlabel('Epochs')
-    plt.ylabel('Precision')
-    plt.legend()
-    
-    plt.subplot(2, 3, 3)
-    plt.plot(epoch_range, recalls, label='Recall')
-    plt.xlabel('Epochs')
-    plt.ylabel('Recall')
-    plt.legend()
-    
-    plt.subplot(2, 3, 4)
-    plt.plot(epoch_range, f1_scores, label='F1 Score')
-    plt.xlabel('Epochs')
-    plt.ylabel('F1 Score')
-    plt.legend()
-    
-    plt.subplot(2, 3, 5)
-    plt.plot(epoch_range, auc_scores, label='AUC')
+    plt.subplot(3, 4, 3)
+    plt.plot(epoch_range, metrics_dict["auc_score"], label='AUC')
     plt.xlabel('Epochs')
     plt.ylabel('AUC')
     plt.legend()
     
+    plt.subplot(3, 4, 4)
+    plt.plot(epoch_range, metrics_dict["precision0"], label='Precision 0')
+    plt.xlabel('Epochs')
+    plt.ylabel('Precision 0')
+    plt.legend()
+    
+    plt.subplot(3, 4, 5)
+    plt.plot(epoch_range, metrics_dict["precision1"], label='Precision 1')
+    plt.xlabel('Epochs')
+    plt.ylabel('Precision 1')
+    plt.legend()
+    
+    plt.subplot(3, 4, 6)
+    plt.plot(epoch_range, metrics_dict["precision_recall_fscore_macro"], label='Precision Recall FScore Macro')
+    plt.xlabel('Epochs')
+    plt.ylabel('Precision Recall FScore Macro')
+    plt.legend()
+
+    plt.subplot(3, 4, 7)
+    plt.plot(epoch_range, metrics_dict["recall0"], label='Recall 0')
+    plt.xlabel('Epochs')
+    plt.ylabel('Recall 0')
+    plt.legend()
+
+    plt.subplot(3, 4, 8)
+    plt.plot(epoch_range, metrics_dict["recall1"], label='Recall 1')
+    plt.xlabel('Epochs')
+    plt.ylabel('Recall 1')
+    plt.legend()
+
+    plt.subplot(3, 4, 9)
+    plt.plot(epoch_range, metrics_dict["f1macro"], label='F1 Macro')
+    plt.xlabel('Epochs')
+    plt.ylabel('F1 Macro')
+    plt.legend()
+
+    plt.subplot(3, 4, 10)
+    plt.plot(epoch_range, metrics_dict["f1micro"], label='F1 Micro')
+    plt.xlabel('Epochs')
+    plt.ylabel('F1 Micro')
+    plt.legend()
+    
     plt.tight_layout()
     
-    results_dir = 'results'
-    os.makedirs(results_dir, exist_ok=True)
-    
-    plot_path = os.path.join(results_dir, f"{embedding_name}_metrics.png")
-    plt.savefig(plot_path)
+    plt.savefig(graph_file)
     plt.close()
-    print(f"Metrics plot saved to {plot_path}")
+
+    with open(log_file, "a") as f:
+        f.write(f"Metrics plot saved to {graph_file} at {datetime.now()}\n")
+    print(f"Metrics plot saved to {graph_file}")
+
+    with open(log_file, "a") as f:
+        f.write(f"End of logs at {datetime.now()}\n")
 
 def main(name, split="tcr",fraction=1.0, seed=42, device="cpu", epochs:int = 100, modified:bool = False):
     column_names = ["epi", "tcr", "binding"]
@@ -403,12 +382,8 @@ def main(name, split="tcr",fraction=1.0, seed=42, device="cpu", epochs:int = 100
     test_X["epi"] = test_X["epi"].apply(lambda epi: epi.upper().replace("O", "Q").replace("B", "G"))
     test_X["tcr"] = test_X["tcr"].apply(lambda tcr: tcr.upper().replace("O", "Q").replace("B", "G"))
     test_y = test["binding"]
-    # print(train_X.head(5))
-    # print(train_y.head(5))
-    # print(test_X.head(5))
-    # print(test_y.head(5))
 
-    embedding_name = f"{name}_{split}_seed_{seed}_fraction_{fraction}_modified_{modified}"
+    embedding_name = f"{name}_{split}_seed_{seed}_fraction_{fraction}_modified_{modified}_epochs_{epochs}"
     print(f"Data preprocessing done, running model under the name {embedding_name}")
 
     train_(embedding_name, train_X, train_y, test_X, test_y, device=device, epochs=epochs, modified=modified)
