@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from data_loader import define_dataloader, load_embedding, load_data_split
-from utils import str2bool, timeSince, get_performance_batchiter, print_performance, write_blackbox_output_batchiter
+from utils import str2bool, timeSince, get_performance_batchiter, print_performance, write_blackbox_output_batchiter, get_performance
 import matplotlib.pyplot as plt
 import data_io_tf
 import torch.nn as nn
@@ -48,7 +48,8 @@ class CompoundLoss(nn.Module):
 def train(model, device, train_loader, optimizer, criterion, epoch):
 
     model.train()
-
+    score = []
+    label = []
     for batch in train_loader:
 
         x_pep, x_tcr, y = batch.X_pep.to(
@@ -61,7 +62,13 @@ def train(model, device, train_loader, optimizer, criterion, epoch):
         loss.backward()
         optimizer.step()
 
+        score.extend(yhat.data.cpu().tolist())
+        label.extend(y.data.cpu().tolist())
+
+    perf = get_performance(score, label)
+
     print('[TRAIN] Epoch {} Loss {:.4f}'.format(epoch, loss.item()))
+    print(perf)
 
 
 def main():
@@ -125,8 +132,14 @@ def main():
                         help='gamma value for focal loss')
     parser.add_argument('--compound_loss', type=str2bool, default=False,
                         help='use focal + BCE loss')
-    parser.add_argument('--lr_schedule', type=int, default=10,
+    parser.add_argument('--lr_schedule', type=int, default=7,
                         help='number of epochs before reducing lr')
+    parser.add_argument('--lr_drop_factor', type = float, default=0.1,
+                        help='factor to reduce lr by')
+    parser.add_argument('--projection_dim', type=int, default=20,
+                        help='dimension that the epitope/tcr will be projected to before dot product')
+    parser.add_argument('--num_projections', type=int, default=10,
+                        help='number of projections which will have dot product taken, and used as a single feature to classifier head')
     args = parser.parse_args()
 
     if args.mode == 'test':
@@ -188,6 +201,9 @@ def main():
     elif args.model == 'cross_attention':
         print('Using Cross Attention Model')
         from attention import CrossAttentionNet as Net
+    elif args.model == 'project_mult_model':
+        print('Using model to project epi/tcr, then dot product to get features for classification')
+        from attention import PepEpiMultNet as Net
     else:
         raise ValueError('unknown model name')
     print(f'Min epoch: {args.min_epoch}')
@@ -237,12 +253,16 @@ def main():
         lossArray = deque([sys.maxsize], maxlen=lossArraySize)
         lr = args.lr
         lr_schedule = args.lr_schedule
+        drop_factor = args.lr_drop_factor
         for epoch in range(1, args.epoch + 1):
             if epoch % lr_schedule == 0:
-                lr = lr / 10
+                lr *= drop_factor
                 optimizer = optim.Adam(model.parameters(), lr=lr)
 
             train(model, device, train_loader['loader'], optimizer, criterion, epoch)
+            
+            # Print performance
+            print('[TEST ] {} ----------------'.format(epoch))
             perf_test = get_performance_batchiter(
                 test_loader['loader'], model, device)
             print(perf_test)
@@ -275,11 +295,7 @@ def main():
                 max_f1macro.append(perf_test['f1macro'])
                 max_f1micro.append(perf_test['f1micro'])
 
-            # Print performance
-            if epoch % PRINT_EVERY_EPOCH == 0:
-                print('[TEST ] {} ----------------'.format(epoch))
-                print_performance(perf_test, printif=False,
-                                  writeif=True, wf=wf)
+            
 
             # Check for early stopping
             lossArray.append(perf_test['loss'])
