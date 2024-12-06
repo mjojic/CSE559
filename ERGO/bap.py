@@ -21,6 +21,7 @@ from datetime import datetime
 from numpy import mean, std
 import sklearn.model_selection
 import lstm_utils as lstm
+from ERGO_models import DoubleLSTMClassifier, ModifiedLSTMClassifier
 import matplotlib.pyplot as plt
 
 
@@ -366,7 +367,123 @@ def train_(embedding_name, train_X, train_y, test_X, test_y, device:str = "cpu",
     with open(log_file, "a") as f:
         f.write(f"End of logs at {datetime.now()}\n")
 
-def main(name, split="tcr",fraction=1.0, seed=42, device="cpu", epochs:int = 100, modified:bool = False):
+def predict_(embedding_name, test_X, test_y, device = "cpu", modified:bool = False):
+    os.makedirs("logs", exist_ok=True)
+    os.makedirs("outputs", exist_ok=True)
+    os.makedirs("models", exist_ok=True)
+    log_file = f"logs/{embedding_name}.log"
+    output_file = f"outputs/{embedding_name}.txt"
+    model_file = f"models/{embedding_name}.pt"
+
+    print(f"Modified: {modified}")
+    with open(log_file, "a") as f:
+        f.write(f"Beginning prediction of {embedding_name} from {model_file} at {datetime.now()}\n")
+        f.write(f"Modified: {modified}\n")
+
+    # Hyperparameters
+    # hyper-params
+    print("Setting up arg dict")
+    arg = {}
+    arg['train_auc_file'] = f"{embedding_name}_train_auc"
+    arg['test_auc_file'] = f"{embedding_name}_test_auc"
+    arg["modified"] = modified
+    arg['siamese'] = False
+    print("Setting up params dict")
+    params = {}
+    params['lr'] = 1e-4
+    params['wd'] = 0
+    params['epochs'] = 100
+    params['batch_size'] = 50 # hardcoded into the predict function! no clue why!
+    params['lstm_dim'] = 500
+    params['emb_dim'] = 10
+    params['dropout'] = 0.1
+    params['option'] = 0
+    params['enc_dim'] = 100
+    params['train_ae'] = True
+
+    print("Creating amino acid to index dict")
+    # Used for converting amino acids to indices for the model. IDK if we can do without it or not, or replace it with something else.
+    amino_acids = [letter for letter in 'ARNDCEQGHILKMFPSTWYV']
+    amino_to_ix = {amino: index for index, amino in enumerate(['PAD'] + amino_acids)}
+
+    with open(log_file, "a") as f:
+        f.write(f"Creating model to load state to at {datetime.now()}\n")
+    print(f"Creating the model to load state to. The model we are loading is the {'modified' if modified else 'default'} version")
+    if modified:
+        model = ModifiedLSTMClassifier(params['emb_dim'], params['lstm_dim'], params['dropout'], device)
+    else:
+        model = DoubleLSTMClassifier(params['emb_dim'], params['lstm_dim'], params['dropout'], device)
+
+    print(f"Loading state dict from {model_file}")
+    with open(log_file, "a") as f:
+        f.write(f"Loading state dict from {model_file} at {datetime.now()}\n")
+    model_state_dict = torch.load(model_file) # In the train part we save just the model weights.
+    model.load_state_dict(model_state_dict)
+    print(f"Moving model to {device}")
+    with open(log_file, "a") as f:
+        f.write(f"Moving model to {device} at {datetime.now()}\n")
+    model.to(device)
+
+    with open(log_file, "a") as f:
+        f.write(f"Creating test lists at {datetime.now()}\n")
+    print("Creating test lists:\n\tTCRs")
+    test_tcrs = test_X["tcr"].to_list()
+    print("\tEpis")
+    test_peps = test_X["epi"].to_list()
+    print("\tSigns")
+    test_signs = test_y.to_list()
+
+    with open(log_file, "a") as f:
+        f.write(f"Converting test lists at {datetime.now()}\n")
+    print("Converting test data to lists of indices")
+    lstm.convert_data(test_tcrs, test_peps, amino_to_ix) # Converts the strings into lists of indices
+
+    with open(log_file, "a") as f:
+        f.write(f"Getting test batches at {datetime.now()}\n")
+    print("Getting test batches from converted test lists")
+    test_batches = lstm.get_batches(test_tcrs, test_peps, test_signs, params['batch_size'])
+
+    with open(log_file, "a") as f:
+        f.write(f"Metrics being generated at {datetime.now()}\n")
+    metrics_dict = lstm.get_metrics_dict(model, test_batches, device)
+
+    with open(log_file, "a") as f:
+        f.write(f"Printing output and saving to {output_file} at {datetime.now()}\n")
+    print('================Performance of model========================')
+    
+    print(f'{embedding_name} AUC: {metrics_dict["auc_score"]}')
+
+    print(f'precision_recall_fscore_macro is {metrics_dict["precision_recall_fscore_macro"]}')
+    print(f'acc is {metrics_dict["accuracy"]}')
+    print(f'precision1 is {metrics_dict["precision1"]}')
+    print(f'precision0 is {metrics_dict["precision0"]}')
+    print(f'recall1 is {metrics_dict["recall1"]}')
+    print(f'recall0 is {metrics_dict["recall0"]}')
+    print(f'f1macro is {metrics_dict["f1macro"]}')
+    print(f'f1micro is {metrics_dict["f1micro"]}')
+
+    with open(output_file, "a") as f:
+        f.write(f"Generated results at {datetime.now()}\n")
+        f.write("Showing metrics from saved model for test data\n")
+        f.write("------------------------------------------\n")
+        f.write(f"Modifed? {modified}\n")
+        f.write(f'AUC: {metrics_dict["auc_score"]}\n')
+        f.write(f'Accuracy: {metrics_dict["accuracy"]}\n')
+        f.write(f'Precision Recall FScore Macro: {metrics_dict["precision_recall_fscore_macro"]}\n')
+        f.write(f'Precision 1: {metrics_dict["precision1"]}\n')
+        f.write(f'Precision 0: {metrics_dict["precision0"]}\n')
+        f.write(f'Recall 1: {metrics_dict["recall1"]}\n')
+        f.write(f'Recall 0: {metrics_dict["recall0"]}\n')
+        f.write(f'F1 Macro: {metrics_dict["f1macro"]}\n')
+        f.write(f'F1 Micro: {metrics_dict["f1micro"]}\n')
+        f.write("\n")
+    
+    with open(log_file, "a") as f:
+        f.write(f"End of logging at {datetime.now()}\n")
+        f.write("\n")
+
+
+def main(name, train_data:str, test_data:str, split="tcr", fraction=1.0, seed=42, device="cpu", epochs:int = 100, modified:bool = False, predict:bool = False):
     column_names = ["epi", "tcr", "binding"]
     print(f"Getting the data for the split {split}")
     if split == "epi":
@@ -392,16 +509,22 @@ def main(name, split="tcr",fraction=1.0, seed=42, device="cpu", epochs:int = 100
     test_X["tcr"] = test_X["tcr"].apply(lambda tcr: tcr.upper().replace("O", "Q").replace("B", "G"))
     test_y = test["binding"]
 
-    embedding_name = f"{name}_{split}_seed_{seed}_fraction_{fraction}_modified_{modified}_epochs_{epochs}"
-    print(f"Data preprocessing done, running model under the name {embedding_name}")
+    # embedding_name = f"{name}_{split}_seed_{seed}_fraction_{fraction}_modified_{modified}_epochs_{epochs}"
+    print(f"Data preprocessing done, running model under the name {name}")
 
-    train_(embedding_name, train_X, train_y, test_X, test_y, device=device, epochs=epochs, modified=modified)
+    if predict:
+        predict_(name, test_X, test_y, device=device, modified=modified)
+    else:
+        train_(name, train_X, train_y, test_X, test_y, device=device, epochs=epochs, modified=modified)
 
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--name', type=str,help='Name of the model (for output)')
+    parser.add_argument('--mode', type=str, help="Mode to run in. Use `train` to train a new model, or `predict` to get predictions for an existing model.")
+    parser.add_argument('--train_data', type=str, help="Path to train data csv")
+    parser.add_argument('--test_data', type=str, help="Path to test data csv")
+    parser.add_argument('--name', type=str,help='Name to use for saving/loading')
     parser.add_argument('--split', type=str,help='tcr or epi')
     parser.add_argument('--device', type=str)
     parser.add_argument('--fraction', type=float, default=1.0) 
@@ -409,6 +532,10 @@ if __name__ == '__main__':
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--modified", type=int)
     args = parser.parse_args()
+    if args.mode is not None and args.mode == "predict":
+        predict = True
+    else:
+        predict = False
     if args.modified is not None and args.modified > 0:
         modified = True
     else:
@@ -437,4 +564,12 @@ if __name__ == '__main__':
         name = args.name
     else:
         name = "default_name"
-    main(name=name, split=split, fraction=fraction, seed=seed, device=device, epochs=epochs, modified=modified)
+    if args.test_data is not None:
+        test_data = args.test_data
+    else:
+        test_data = f"{split}_split_test.csv"
+    if args.train_data is not None:
+        train_data = args.train_data
+    else:
+        train_data = f"{split}_split_train.csv"
+    main(name=name, split=split, fraction=fraction, seed=seed, device=device, epochs=epochs, modified=modified, predict=predict, train_data=train_data, test_data=test_data)
