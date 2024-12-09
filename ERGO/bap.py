@@ -513,6 +513,11 @@ def main(name, train_data:str, test_data:str, split="tcr", fraction=1.0, seed=42
 
     # embedding_name = f"{name}_{split}_seed_{seed}_fraction_{fraction}_modified_{modified}_epochs_{epochs}"
     print(f"Data preprocessing done, running model under the name {name}")
+    print(f"Split: {split}")
+    
+    with open(f"logs/{name}.log", "a") as f:
+        f.write(f"Data split for {name} will be {split}\n")
+        f.write(f"We will be {'predict' if predict else 'train'}ing.\n")
 
     if predict:
         predict_(name, test_X, test_y, device=device, modified=modified)
