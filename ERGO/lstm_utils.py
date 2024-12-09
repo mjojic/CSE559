@@ -5,7 +5,7 @@ from random import shuffle
 import time
 import numpy as np
 import torch.autograd as autograd
-from ERGO_models import DoubleLSTMClassifier, ModifiedLSTMClassifier
+from ERGO_models import DoubleLSTMClassifier, ModifiedLSTMClassifier, LSTM_ProjectionNet
 from sklearn.metrics import precision_recall_fscore_support,roc_auc_score, precision_score, recall_score, f1_score, roc_curve, accuracy_score
 
 
@@ -166,6 +166,14 @@ def train_model(batches, test_batches, device, args, params):
     elif "modified" in args and args["modified"] is True:
         print("Modified LSTM selected")
         model = ModifiedLSTMClassifier(params['emb_dim'], params['lstm_dim'], params['dropout'], device)
+        # model = LSTM_ProjectionNet(
+        #     embedding_dim=params['emb_dim'], 
+        #     lstm_dim=params['lstm_dim'], 
+        #     dropout=params['dropout'], 
+        #     device=device,
+        #     projection_dim=params['proj_dim'],
+        #     num_projections=params['num_proj'],
+        # )
     else:
         print("Regular LSTM selected")
         model = DoubleLSTMClassifier(params['emb_dim'], params['lstm_dim'], params['dropout'], device)

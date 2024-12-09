@@ -21,7 +21,7 @@ from datetime import datetime
 from numpy import mean, std
 import sklearn.model_selection
 import lstm_utils as lstm
-from ERGO_models import DoubleLSTMClassifier, ModifiedLSTMClassifier
+from ERGO_models import DoubleLSTMClassifier, ModifiedLSTMClassifier, LSTM_ProjectionNet
 import matplotlib.pyplot as plt
 
 
@@ -124,21 +124,32 @@ def load_data_split(dat,split_type, seed):
     X1_train, X2_train, y_train = np.array(X1_train_list), np.array(X2_train_list), np.array(y_train_list)
     return  X1_train, X2_train, y_train, X1_test, X2_test, y_test, testData, trainData
 
-def lstm_get_lists_from_pairs(pairs):
-    tcrs = []
-    peps = []
-    signs = []
-    for pair in pairs:
-        tcr, pep, label = pair
-        tcrs.append(tcr)
-        peps.append(pep[0])
-        if label == 'p':
-            signs.append(1.0)
-        elif label == 'n':
-            signs.append(0.0)
-    return tcrs, peps, signs
+def get_params(
+        learning_rate:float = 1e-4,
+        epochs:int = 100, 
+        lstm_dim:int = 500,
+        embedding_dim:int = 10,
+        dropout:float = 0.1,
+        encoding_dim:int = 100,
+        projection_dim:int = 64,
+        num_projections:int = 10,
+    ):
+    params = {}
+    params['lr'] = learning_rate
+    params['wd'] = 0
+    params['epochs'] = epochs
+    params['batch_size'] = 50 # number is hardcoded into the predict function! no clue why!
+    params['lstm_dim'] = lstm_dim
+    params['emb_dim'] = embedding_dim
+    params['dropout'] = dropout
+    params['option'] = 0
+    params['enc_dim'] = encoding_dim
+    params['train_ae'] = True
+    params['proj_dim'] = projection_dim
+    params['num_proj'] = num_projections
+    return params
 
-def train_(embedding_name, train_X, train_y, test_X, test_y, device:str = "cpu", epochs:int = 100, modified:bool = False):
+def train_(embedding_name, train_X, train_y, test_X, test_y, device:str = "cpu", epochs:int = 100, modified:bool = False, learning_rate:float = 1e-4):
     os.makedirs("logs", exist_ok=True)
     os.makedirs("outputs", exist_ok=True)
     os.makedirs("graphs", exist_ok=True)
@@ -159,31 +170,10 @@ def train_(embedding_name, train_X, train_y, test_X, test_y, device:str = "cpu",
     arg = {}
     arg['train_auc_file'] = f"{embedding_name}_train_auc"
     arg['test_auc_file'] = f"{embedding_name}_test_auc"
-    # if args.test_auc_file is None or args.test_auc_file == 'auto':
-    #     dir = 'save_results'
-    #     p_key = 'protein' if args.protein else ''
-    #     arg['test_auc_file'] = dir + '/' + '_'.join([args.model_type, args.dataset, args.sampling, p_key])
-    # arg['ae_file'] = args.ae_file
-    # if args.ae_file is None or args.ae_file == 'auto':
-    #     args.ae_file = 'TCR_Autoencoder/tcr_ae_dim_30.pt'
-    #     arg['ae_file'] = 'TCR_Autoencoder/tcr_ae_dim_30.pt'
-    #     pass
     arg["modified"] = modified
     arg['siamese'] = False
     print("Setting up params dict")
-    params = {}
-    params['lr'] = 1e-4
-    params['wd'] = 0
-    params['epochs'] = epochs
-    # if args.dataset == 'tumor':
-    #     params['epochs'] = 25
-    params['batch_size'] = 50 # hardcoded into the predict function! no clue why!
-    params['lstm_dim'] = 500
-    params['emb_dim'] = 10
-    params['dropout'] = 0.1
-    params['option'] = 0
-    params['enc_dim'] = 100
-    params['train_ae'] = True
+    params = get_params(epochs=epochs, learning_rate=learning_rate)
 
     print("Creating amino acid to index dict")
     # Used for converting amino acids to indices for the model. IDK if we can do without it or not, or replace it with something else.
@@ -242,17 +232,17 @@ def train_(embedding_name, train_X, train_y, test_X, test_y, device:str = "cpu",
     with open(log_file, "a") as f:
         f.write(f"Saving model weights to {model_file} at {datetime.now()}\n")
     print(f"Saving model weights to {model_file}")
-    # torch.save({
-    #     'model_state_dict': model.state_dict(),
-    #     'params': params
-    #     }, 
-    #     model_file)
-    torch.save(model.state_dict(), model_file)
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'params': params
+        }, 
+        model_file)
+    # torch.save(model.state_dict(), model_file)
 
     with open(log_file, "a") as f:
         f.write(f"Metrics being generated at {output_file} at {datetime.now()}\n")
     
-    print('================Performance of last epoch========================')
+    print(f'================Performance of last epoch with learning rate: {learning_rate}========================')
     
     print(f'{embedding_name} AUC: {metrics_dict["auc_score"][-1]}')
 
@@ -269,6 +259,7 @@ def train_(embedding_name, train_X, train_y, test_X, test_y, device:str = "cpu",
         f.write(f"Generated results at {datetime.now()}\n")
         f.write("Showing last epoch's metrics\n")
         f.write("------------------------------------------\n")
+        f.write(f"Learning rate: {learning_rate}")
         f.write(f"Modifed? {modified}\n")
         f.write(f'AUC: {metrics_dict["auc_score"][-1]}\n')
         f.write(f'Accuracy: {metrics_dict["accuracy"][-1]}\n')
@@ -388,37 +379,48 @@ def predict_(embedding_name, test_X, test_y, device = "cpu", modified:bool = Fal
     arg['test_auc_file'] = f"{embedding_name}_test_auc"
     arg["modified"] = modified
     arg['siamese'] = False
-    print("Setting up params dict")
-    params = {}
-    params['lr'] = 1e-4
-    params['wd'] = 0
-    params['epochs'] = 100
-    params['batch_size'] = 50 # hardcoded into the predict function! no clue why!
-    params['lstm_dim'] = 500
-    params['emb_dim'] = 10
-    params['dropout'] = 0.1
-    params['option'] = 0
-    params['enc_dim'] = 100
-    params['train_ae'] = True
 
     print("Creating amino acid to index dict")
     # Used for converting amino acids to indices for the model. IDK if we can do without it or not, or replace it with something else.
     amino_acids = [letter for letter in 'ARNDCEQGHILKMFPSTWYV']
     amino_to_ix = {amino: index for index, amino in enumerate(['PAD'] + amino_acids)}
 
+    print(f"Loading saved model info from {model_file}")
+    with open(log_file, "a") as f:
+        f.write(f"Loading saved model info from {model_file} at {datetime.now()}\n")
+    model_saved_data = torch.load(model_file)
+    if model_saved_data["model_state_dict"] is None:
+        with open(log_file, "a") as f:
+            f.write(f"{model_file} has only model state dict at {datetime.now()}\n")
+        print("Model state dict was saved alone. Using default params")
+        model_state_dict = model_saved_data
+        params = get_params()
+    else:
+        with open(log_file, "a") as f:
+            f.write(f"{model_file} has both model state dict and params at {datetime.now()}\n")
+        print("Getting model state dict and saved params")
+        model_state_dict = model_saved_data["model_state_dict"]
+        params = model_saved_data["params"]
+    
     with open(log_file, "a") as f:
         f.write(f"Creating model to load state to at {datetime.now()}\n")
     print(f"Creating the model to load state to. The model we are loading is the {'modified' if modified else 'default'} version")
     if modified:
         model = ModifiedLSTMClassifier(params['emb_dim'], params['lstm_dim'], params['dropout'], device)
+        # model = LSTM_ProjectionNet(
+        #     embedding_dim=params['emb_dim'], 
+        #     lstm_dim=params['lstm_dim'], 
+        #     dropout=params['dropout'], 
+        #     device=device,
+        #     projection_dim=params["proj_dim"],
+        #     num_projections=params["num_proj"]
+        # )
     else:
         model = DoubleLSTMClassifier(params['emb_dim'], params['lstm_dim'], params['dropout'], device)
 
-    print(f"Loading state dict from {model_file}")
-    with open(log_file, "a") as f:
-        f.write(f"Loading state dict from {model_file} at {datetime.now()}\n")
-    model_state_dict = torch.load(model_file) # In the train part we save just the model weights.
+    print("Loading state dict to model")
     model.load_state_dict(model_state_dict)
+
     print(f"Moving model to {device}")
     with open(log_file, "a") as f:
         f.write(f"Moving model to {device} at {datetime.now()}\n")
@@ -449,7 +451,7 @@ def predict_(embedding_name, test_X, test_y, device = "cpu", modified:bool = Fal
 
     with open(log_file, "a") as f:
         f.write(f"Printing output and saving to {output_file} at {datetime.now()}\n")
-    print('================Performance of model========================')
+    print('================Performance of model with rate========================')
     
     print(f'{embedding_name} AUC: {metrics_dict["auc_score"]}')
 
@@ -483,7 +485,7 @@ def predict_(embedding_name, test_X, test_y, device = "cpu", modified:bool = Fal
         f.write("\n")
 
 
-def main(name, train_data:str, test_data:str, split="tcr", fraction=1.0, seed=42, device="cpu", epochs:int = 100, modified:bool = False, predict:bool = False):
+def main(name, train_data:str, test_data:str, split="tcr", fraction=1.0, seed=42, device="cpu", epochs:int = 100, modified:bool = False, predict:bool = False, learning_rate:float=1e-4):
     column_names = ["epi", "tcr", "binding"]
     print(f"Getting the data for the split {split}")
     if split == "epi":
@@ -515,7 +517,7 @@ def main(name, train_data:str, test_data:str, split="tcr", fraction=1.0, seed=42
     if predict:
         predict_(name, test_X, test_y, device=device, modified=modified)
     else:
-        train_(name, train_X, train_y, test_X, test_y, device=device, epochs=epochs, modified=modified)
+        train_(name, train_X, train_y, test_X, test_y, device=device, epochs=epochs, modified=modified, learning_rate=learning_rate)
 
 
 
@@ -530,6 +532,7 @@ if __name__ == '__main__':
     parser.add_argument('--fraction', type=float, default=1.0) 
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument("--epochs", type=int)
+    parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--modified", type=int)
     args = parser.parse_args()
     if args.mode is not None and args.mode == "predict":
@@ -552,6 +555,10 @@ if __name__ == '__main__':
         fraction = args.fraction
     else:
         fraction = 1.0
+    if args.learning_rate is not None:
+        learning_rate = args.learning_rate
+    else:
+        learning_rate = 1e-4
     if args.seed is not None:
         seed = args.seed
     else:
@@ -572,4 +579,4 @@ if __name__ == '__main__':
         train_data = args.train_data
     else:
         train_data = f"{split}_split_train.csv"
-    main(name=name, split=split, fraction=fraction, seed=seed, device=device, epochs=epochs, modified=modified, predict=predict, train_data=train_data, test_data=test_data)
+    main(name=name, split=split, fraction=fraction, seed=seed, device=device, epochs=epochs, modified=modified, predict=predict, train_data=train_data, test_data=test_data, learning_rate=learning_rate)
