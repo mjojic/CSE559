@@ -479,9 +479,9 @@ def main():
         print_performance(perf_indep)
 
         # write blackbox output
-        wf_bb_open1 = open('result/pred_' + os.path.splitext(os.path.basename('model_name'))[0] + '_' +
+        wf_bb_open1 = open('result/pred_' + os.path.splitext(os.path.basename(''))[0] + '_' +
                            os.path.basename(args.indepfile), 'w')
-        wf_bb1 = csv.writer(wf_bb_open1, delimiter='\t')
+        wf_bb1 = csv.writer(wf_bb_open1, delimiter=',')
         write_blackbox_output_batchiter(
             indep_loader, model, wf_bb1, device, ifscore=False)
 
