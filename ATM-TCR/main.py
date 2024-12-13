@@ -184,9 +184,8 @@ def main():
                                     padding=args.padding,
                                     batch_size=args.batch_size, device=device)
     if args.indepfile is not None:
-        x_indep_pep, x_indep_tcr, y_indep = data_io_tf.read_pTCR(args.indepfile)
-        y_indep = np.array(y_indep)
-        indep_loader = define_dataloader(x_indep_pep, x_indep_tcr, y_indep, 
+        x_indep_pep, x_indep_tcr, _ = data_io_tf.read_pTCR(args.indepfile)
+        indep_loader = define_dataloader(x_indep_pep, x_indep_tcr, 
                                          maxlen_pep=train_loader['pep_length'],
                                          maxlen_tcr=train_loader['tcr_length'],
                                          padding=args.padding,
@@ -471,7 +470,7 @@ def main():
         assert model_name in os.listdir('./models')
 
         # model_name = './models/' + model_name
-        # model.load_state_dict(torch.load(model_name, map_location=torch.device('cpu')))
+        model.load_state_dict(torch.load('best_model_projection_net.pth', map_location=torch.device(device)))
 
         # evaluate and print independent-test-set performance
         print('[INDEP] {} ----------------')
@@ -480,11 +479,11 @@ def main():
         print_performance(perf_indep)
 
         # write blackbox output
-        wf_bb_open1 = open('result/pred_' + os.path.splitext(os.path.basename(model_name))[0] + '_' +
+        wf_bb_open1 = open('result/pred_' + os.path.splitext(os.path.basename('model_name'))[0] + '_' +
                            os.path.basename(args.indepfile), 'w')
         wf_bb1 = csv.writer(wf_bb_open1, delimiter='\t')
         write_blackbox_output_batchiter(
-            indep_loader, model, wf_bb1, device, ifscore=True)
+            indep_loader, model, wf_bb1, device, ifscore=False)
 
     else:
         print('\nError: "--mode train" or "--mode test" expected')

@@ -43,7 +43,8 @@ def read_pTCR(filename):
                 if l[0] != "peptide":
                     peptides.append(data[0])
                     tcrs.append(data[1])
-                    bound.append(data[2])
+                    if len(data) == 3:
+                        bound.append(data[2])
     infile.close()
 
     # return data:
