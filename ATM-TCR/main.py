@@ -483,7 +483,7 @@ def main():
                            os.path.basename(args.indepfile), 'w')
         wf_bb1 = csv.writer(wf_bb_open1, delimiter=',')
         write_blackbox_output_batchiter(
-            indep_loader, model, wf_bb1, device, ifscore=False)
+            indep_loader, model, wf_bb1, device, ifscore=True)
 
     else:
         print('\nError: "--mode train" or "--mode test" expected')
